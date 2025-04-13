@@ -1,0 +1,61 @@
+import pyarrow.parquet as pq
+import pandas as pd
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+import sklearn
+import numpy
+
+trips1 = pq.read_table('yellow_tripdata_2022-05.parquet')
+trips1 = trips1.to_pandas()
+
+
+trips = pd.concat([trips1], ignore_index=True)
+
+trips = trips.filter(items=['tip_amount', 'tpep_pickup_datetime', 'trip_distance', 'total_amount'])
+trips['total_amount'] = trips['total_amount'] - trips['tip_amount']
+# remove outliers
+trips = trips[trips['total_amount'] > 1]
+trips = trips[trips['total_amount'] <= 500]
+avgdist = trips['trip_distance'].median()
+print(avgdist)
+
+# limit distance to around median
+trips = trips[trips['trip_distance'] > avgdist -.1]
+trips = trips[trips['trip_distance'] < avgdist +.1]
+trips = trips.sample(5000)
+
+
+# get hour value for time series and box plot graph
+trips['hour'] = trips['tpep_pickup_datetime'].dt.hour
+# get exact time for scatter plot
+trips['tpep_pickup_datetime'] = trips['tpep_pickup_datetime'].dt.hour + trips['tpep_pickup_datetime'].dt.minute/60 + trips['tpep_pickup_datetime'].dt.second/3600
+
+# df column to list for regression handling
+xval = trips['tpep_pickup_datetime'].tolist()
+yval = trips['total_amount'].tolist()
+
+# make best fit line with a degree of 3 and get rmse for evaluation
+modell = numpy.poly1d(numpy.polyfit(xval, yval, 3))
+linee = numpy.linspace(1,24,100)
+predval = modell(xval)
+mse = sklearn.metrics.mean_squared_error(yval, predval)
+rmse = numpy.sqrt(mse)
+print(rmse)
+
+# scatter plot with best fit line
+plt.scatter(xval,yval, s=5)
+plt.plot(linee, modell(linee), color = 'red')
+plt.show()
+
+# time series graph with average fares for each hour
+plt.figure(figsize=(10,5))
+hourlyavg = trips.groupby('hour')['total_amount'].mean()
+plt.plot(hourlyavg.index, hourlyavg.values)
+plt.xticks(range(24))
+plt.show()
+
+# box plot for total fare for each hour
+plt.figure(figsize=(10, 5))
+plt.boxplot([trips[trips['hour'] == hour]['total_amount'] for hour in range(24)], labels=range(24))
+plt.show()

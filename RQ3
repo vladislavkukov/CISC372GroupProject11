@@ -1,0 +1,75 @@
+import pyarrow.parquet as pq
+import pandas as pd
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+import sklearn
+import numpy
+
+trips1 = pq.read_table('yellow_tripdata_2022-05.parquet')
+trips1 = trips1.to_pandas()
+
+
+trips = pd.concat([trips1], ignore_index=True)
+
+trips = trips.filter(items=['tip_amount', 'tpep_pickup_datetime', 'fare_amount', 'total_amount'])
+# remove outliers
+trips = trips[trips['tip_amount'] > 1]
+trips = trips[trips['tip_amount'] < 100]
+lower = trips['fare_amount'].quantile(0.05)
+print(lower)
+
+trips = trips[trips['fare_amount'] > lower]
+avgpay = trips['fare_amount'].median()
+
+# limit distance to around median
+trips['tip_amount'] = (trips['tip_amount']/trips['fare_amount'])*100
+trips = trips[trips['tip_amount'] < 100]
+trips['tip_bin'] = pd.cut(trips['tip_amount'], bins=[0, 20, 25, 30, 35, 100],  labels=['0-20%', '20-25%', '25-30%', '30-35%', '35+%'])
+
+
+
+trips = trips.sample(50000)
+
+
+# get hour value for time series and box plot graph
+trips['hour'] = trips['tpep_pickup_datetime'].dt.hour
+tods = ['Night','Early Morning', 'Morning Commute', 'Daytime', 'Evening Commute', 'Late Evening']
+trips['tod'] = pd.cut(trips['hour'], bins=[0, 4, 7, 11, 16, 19, 24], labels=tods)
+hourly_avg = trips.groupby('hour')['tip_amount'].mean().reset_index()
+
+# get exact time for scatter plot
+trips['tpep_pickup_datetime'] = trips['tpep_pickup_datetime'].dt.hour + trips['tpep_pickup_datetime'].dt.minute/60 + trips['tpep_pickup_datetime'].dt.second/3600
+# df column to list for regression handling
+xval = hourly_avg['hour'].tolist()
+yval = hourly_avg['tip_amount'].tolist()
+
+# make best fit line with a degree of 3 and get rmse for evaluation
+modell = numpy.poly1d(numpy.polyfit(xval, yval, 3))
+linee = numpy.linspace(1,24,100)
+predval = modell(xval)
+mse = sklearn.metrics.mean_squared_error(yval, predval)
+rmse = numpy.sqrt(mse)
+print(rmse)
+
+ct = pd.crosstab(trips['tod'], trips['tip_bin'], normalize='index')*100
+print(ct)
+ct.plot(kind='bar', stacked=False, figsize=(10, 6))
+plt.show()
+
+# scatter plot with best fit line
+plt.scatter(xval,yval, s=10)
+plt.plot(linee, modell(linee), color = 'red')
+plt.show()
+
+# time series graph with average fares for each hour
+plt.figure(figsize=(10,5))
+hourlyavg = trips.groupby('hour')['tip_amount'].mean()
+plt.plot(hourlyavg.index, hourlyavg.values)
+plt.xticks(range(24))
+plt.show()
+
+# box plot for total fare for each hour
+plt.figure(figsize=(10, 5))
+plt.boxplot([trips[trips['tod'] == tod]['tip_amount'] for tod in tods], labels=tods)
+plt.show()
